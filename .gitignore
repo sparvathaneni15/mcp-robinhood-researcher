@@ -1,4 +1,7 @@
 .env
+__pycache__/
+*.pyc
+*.pyo
 dist/
 node_modules/
 *.js.map

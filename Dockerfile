@@ -1,15 +1,13 @@
-FROM node:20-alpine AS builder
+FROM python:3.12-slim AS builder
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci
-COPY tsconfig.json ./
-COPY src/ ./src/
-RUN npm run build
+COPY requirements.txt ./
+RUN pip install --no-cache-dir -r requirements.txt
 
-FROM node:20-alpine AS runner
+FROM python:3.12-slim AS runner
 WORKDIR /app
-COPY package*.json ./
-RUN npm ci --omit=dev
-COPY --from=builder /app/dist ./dist
-EXPOSE 3000
-CMD ["node", "dist/server.js"]
+COPY --from=builder /usr/local/lib/python3.12/site-packages /usr/local/lib/python3.12/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+COPY auth.py server.py ./
+COPY tools/ ./tools/
+EXPOSE 8000
+CMD ["python", "server.py"]

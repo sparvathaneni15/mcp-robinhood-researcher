@@ -1,8 +1,27 @@
 services:
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - mcp
+    restart: unless-stopped
+
   mcp:
     build: .
     env_file:
       - .env
-    ports:
-      - "3000:3000"
+    environment:
+      MCP_TRANSPORT: http
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      MCP_PATH: /mcp
+      MCP_BASE_URL: https://beast-pc.tail856667.ts.net/robinhood
+    volumes:
+      - rh_tokens:/root/.tokens
     restart: unless-stopped
+
+volumes:
+  rh_tokens:
