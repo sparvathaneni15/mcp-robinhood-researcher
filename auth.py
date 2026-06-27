@@ -3,7 +3,6 @@ import threading
 import time
 import secrets as _secrets
 
-import pyotp
 import requests as _requests
 import robin_stocks.robinhood as rh
 from dotenv import load_dotenv
@@ -18,29 +17,16 @@ _refresh_thread: threading.Thread | None = None
 _RH_CLIENT_ID = "c82SH0WZOsabOXGP2sxqcj34FxkvfnWRZBKlBjFS"
 _RH_TOKEN_URL = "https://api.robinhood.com/oauth2/token/"
 
-# Held in memory for the refresh loop
 _refresh_token: str | None = None
 _device_token: str | None = None
 
 
-def _totp_code() -> str | None:
-    secret = os.getenv("ROBINHOOD_TOTP_SECRET", "").strip()
-    if not secret:
-        return None
-    return pyotp.TOTP(secret).now()
-
-
-def _inject_tokens(access_token: str, token_type: str = "Bearer") -> None:
-    """Set auth header on the robin_stocks session directly."""
-    rh.helper.update_session("Authorization", f"{token_type} {access_token}")
+def _inject_tokens(access_token: str) -> None:
+    rh.helper.update_session("Authorization", f"Bearer {access_token}")
     rh.helper.set_login_state(True)
 
 
 def _refresh_via_oauth(refresh_tok: str, dev_token: str) -> tuple[str, str]:
-    """
-    Call the Robinhood OAuth refresh endpoint.
-    Returns (new_access_token, new_refresh_token).
-    """
     resp = _requests.post(
         _RH_TOKEN_URL,
         json={
@@ -60,53 +46,25 @@ def _refresh_via_oauth(refresh_tok: str, dev_token: str) -> tuple[str, str]:
 def login() -> None:
     global _logged_in, _refresh_token, _device_token
 
-    # ── Path 1: manual access token (passkey / browser token injection) ──
     access_token = os.getenv("ROBINHOOD_ACCESS_TOKEN", "").strip()
-    refresh_tok = os.getenv("ROBINHOOD_REFRESH_TOKEN", "").strip()
-    if access_token:
-        _inject_tokens(access_token)
-        dev = os.getenv("ROBINHOOD_DEVICE_TOKEN", "").strip()
-        _device_token = dev or _secrets.token_hex(16)
-        if refresh_tok:
-            _refresh_token = refresh_tok
-        with _lock:
-            _logged_in = True
-        print("[auth] Injected access token from environment", flush=True)
-        return
-
-    # ── Path 2: username/password, optionally with a known device token ──
-    username = os.getenv("ROBINHOOD_USERNAME", "").strip()
-    password = os.getenv("ROBINHOOD_PASSWORD", "").strip()
-    if not username or not password:
+    if not access_token:
         raise EnvironmentError(
-            "Set ROBINHOOD_ACCESS_TOKEN (passkey flow) or "
-            "ROBINHOOD_USERNAME + ROBINHOOD_PASSWORD in .env"
+            "ROBINHOOD_ACCESS_TOKEN must be set in .env. "
+            "Get it from Chrome DevTools while logged into robinhood.com: "
+            "Network tab → any api.robinhood.com request → Authorization header."
         )
 
-    # If the user has a previously registered device token, patch it in so
-    # Robinhood may recognise the device as trusted and skip MFA.
-    env_device = os.getenv("ROBINHOOD_DEVICE_TOKEN", "").strip()
-    if env_device:
-        import robin_stocks.robinhood.authentication as _rh_auth
-        _rh_auth.generate_device_token = lambda: env_device
+    _inject_tokens(access_token)
 
-    mfa_code = _totp_code()
-    result = rh.login(
-        username=username,
-        password=password,
-        expiresIn=86400,
-        scope="internal",
-        mfa_code=mfa_code,
-        store_session=True,
-    )
-
-    if isinstance(result, dict):
-        _refresh_token = result.get("refresh_token")
-        _device_token = result.get("device_token") or env_device
+    refresh_tok = os.getenv("ROBINHOOD_REFRESH_TOKEN", "").strip()
+    dev = os.getenv("ROBINHOOD_DEVICE_TOKEN", "").strip()
+    _device_token = dev or _secrets.token_hex(16)
+    if refresh_tok:
+        _refresh_token = refresh_tok
 
     with _lock:
         _logged_in = True
-    print("[auth] Logged in via username/password", flush=True)
+    print("[auth] Injected access token from environment", flush=True)
 
 
 def _refresh_worker() -> None:
@@ -118,10 +76,9 @@ def _refresh_worker() -> None:
                 new_access, new_refresh = _refresh_via_oauth(_refresh_token, _device_token)
                 _inject_tokens(new_access)
                 _refresh_token = new_refresh
-                print("[auth] Token refreshed via OAuth refresh endpoint", flush=True)
+                print("[auth] Token refreshed", flush=True)
             else:
-                login()
-                print("[auth] Token refreshed via re-login", flush=True)
+                print("[auth] No refresh token available — restart container with a fresh ROBINHOOD_ACCESS_TOKEN", flush=True)
         except Exception as exc:
             print(f"[auth] Token refresh failed: {exc}", flush=True)
 
